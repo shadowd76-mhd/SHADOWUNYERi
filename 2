@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
+<title>Küçük Solucan</title>
+<style>
+  html,body{height:100%;margin:0;font-family:Inter,Arial,Helvetica,sans-serif;background:#0b1020;display:flex;align-items:center;justify-content:center;color:#e6eef8}
+  .wrap{display:flex;flex-direction:column;gap:12px;align-items:center}
+  canvas{background:linear-gradient(180deg,#10202b,#07111a);border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,0.6);}
+  .hud{display:flex;gap:12px;width:100%;justify-content:space-between;max-width:420px}
+  .btn{background:#1b2b3a;padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);cursor:pointer;color:#dff3ff}
+  .score{font-weight:700}
+  .center{display:flex;flex-direction:column;align-items:center;gap:6px}
+  .small{font-size:13px;color:#99b3c7}
+  @media (max-width:420px){
+    canvas{width:92vw;height:92vw}
+  }
+  @media (min-width:421px){
+    canvas{width:420px;height:420px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hud" style="max-width:420px;">
+    <div class="center">
+      <div class="score">Skor: <span id="score">0</span></div>
+      <div class="small">En yüksek: <span id="best">0</span></div>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <button id="btn-pause" class="btn">Duraklat</button>
+      <button id="btn-restart" class="btn">Yeniden</button>
+    </div>
+  </div>
+
+  <canvas id="game" width="420" height="420"></canvas>
+  <div class="small">Kontrol: telefon kaydır, klavye ok tuşları</div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+
+  // Ayarlar
+  const TILE_COUNT = 21; // 21x21 ızgara
+  const tileSize = canvas.width / TILE_COUNT;
+  const INITIAL_SPEED = 8; // FPS-like: hareket per second
+  let speed = INITIAL_SPEED;
+
+  // Oyun durumu
+  let snake = [{x:10, y:10}]; // baş, diğerleri takip
+  let dir = {x:0, y:0}; // hareket yönü (grid bazlı)
+  let nextDir = {x:0, y:0}; // anlık tuş buffering
+  let food = spawnFood();
+  let score = 0;
+  let best = Number(localStorage.getItem('kucuk_solucan_best')||0);
+  document.getElementById('best').innerText = best;
+  let running = true;
+  let gameInterval = null;
+
+  // Hareket zamanı kontrolü (delta ile daha stabil)
+  let lastTime = 0;
+  let moveAccumulator = 0;
+  const moveInterval = 1000 / speed; // ms per move
+
+  function spawnFood(){
+    while(true){
+      const fx = Math.floor(Math.random()*TILE_COUNT);
+      const fy = Math.floor(Math.random()*TILE_COUNT);
+      if(!snake.some(s => s.x===fx && s.y===fy)) return {x:fx,y:fy};
+    }
+  }
+
+  function resetGame(){
+    snake = [{x:10,y:10}];
+    dir = {x:0,y:0};
+    nextDir = {x:0,y:0};
+    food = spawnFood();
+    score = 0;
+    speed = INITIAL_SPEED;
+    document.getElementById('score').innerText = score;
+    running = true;
+  }
+
+  function gameOver(){
+    running = false;
+    if(score > best){
+      best = score;
+      localStorage.setItem('kucuk_solucan_best', String(best));
+      document.getElementById('best').innerText = best;
+    }
+    // küçük bir görsel uyarı
+    setTimeout(()=> {
+      if(confirm('Oyun bitti! Yeniden oynamak ister misin?')) {
+        resetGame();
+        lastTime = performance.now();
+        requestAnimationFrame(loop);
+      }
+    }, 50);
+  }
+
+  function update(){
+    // yön atama (buffered)
+    if((nextDir.x !== 0 || nextDir.y !== 0) && (nextDir.x !== -dir.x || nextDir.y !== -dir.y)) {
+      dir = {...nextDir};
+    }
+
+    if(dir.x === 0 && dir.y === 0) return; // hareket yoksa
+
+    // yeni head
+    const newHead = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
+
+    // duvar çarpması -> sınırdan geçiş (wrap-around) istersen yorum satırını değiştir
+    // wrap-around:
+    newHead.x = (newHead.x + TILE_COUNT) % TILE_COUNT;
+    newHead.y = (newHead.y + TILE_COUNT) % TILE_COUNT;
+
+    // çarpma (kendine)
+    if(snake.some(s => s.x===newHead.x && s.y===newHead.y)){
+      gameOver();
+      return;
+    }
+
+    snake.unshift(newHead);
+
+    // yiyecek yeme
+    if(newHead.x === food.x && newHead.y === food.y){
+      score++;
+      document.getElementById('score').innerText = score;
+      food = spawnFood();
+      // hız biraz artar her 5 yiyecekte
+      if(score % 5 === 0) {
+        speed = Math.min(20, speed + 1);
+      }
+    } else {
+      snake.pop(); // kuyruğu kes (ilerleme)
+    }
+  }
+
+  function draw(){
+    // arka plan
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    // ızgara (ince)
+    ctx.save();
+    ctx.globalAlpha = 0.06;
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = '#88a6b3';
+    for(let i=0;i<=TILE_COUNT;i++){
+      // dikey
+      ctx.beginPath();
+      ctx.moveTo(i*tileSize,0);
+      ctx.lineTo(i*tileSize,canvas.height);
+      ctx.stroke();
+      // yatay
+      ctx.beginPath();
+      ctx.moveTo(0,i*tileSize);
+      ctx.lineTo(canvas.width,i*tileSize);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // yiyecek
+    drawRoundedRect(food.x*tileSize + tileSize*0.08, food.y*tileSize + tileSize*0.08, tileSize*0.84, tileSize*0.84, tileSize*0.18, '#ff6b6b');
+
+    // solucan
+    for(let i=snake.length-1;i>=0;i--){
+      const s = snake[i];
+      const px = s.x*tileSize, py = s.y*tileSize;
+      if(i===0){
+        // baş
+        drawRoundedRect(px+tileSize*0.06, py+tileSize*0.06, tileSize*0.88, tileSize*0.88, tileSize*0.25, '#b9ffb0');
+        // göz
+        const eyeOffsetX = dir.x === 0 ? 0 : dir.x*tileSize*0.18;
+        const eyeOffsetY = dir.y === 0 ? 0 : dir.y*tileSize*0.18;
+        ctx.fillStyle = '#052814';
+        ctx.beginPath();
+        ctx.arc(px+tileSize*0.45 + eyeOffsetX, py+tileSize*0.35 + eyeOffsetY, tileSize*0.06, 0, Math.PI*2);
+        ctx.fill();
+      } else {
+        const shade = 0.65 + (i/snake.length)*0.35;
+        const col = `rgba(${Math.floor(80*shade+50)},${Math.floor(200*shade+20)},${Math.floor(120*shade)},1)`;
+        drawRoundedRect(px+tileSize*0.12, py+tileSize*0.12, tileSize*0.76, tileSize*0.76, tileSize*0.18, col);
+      }
+    }
+
+    // duraklatma yazısı
+    if(!running){
+      ctx.fillStyle = 'rgba(2,6,10,0.6)';
+      ctx.fillRect(canvas.width*0.08, canvas.height*0.38, canvas.width*0.84, canvas.height*0.18);
+      ctx.fillStyle = '#e6eef8';
+      ctx.font = '20px Inter, Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('Duraklatıldı', canvas.width/2, canvas.height/2 + 8);
+    }
+  }
+
+  function drawRoundedRect(x,y,w,h,r,fillStyle){
+    ctx.beginPath();
+    ctx.moveTo(x+r, y);
+    ctx.arcTo(x+w, y, x+w, y+h, r);
+    ctx.arcTo(x+w, y+h, x, y+h, r);
+    ctx.arcTo(x, y+h, x, y, r);
+    ctx.arcTo(x, y, x+w, y, r);
+    ctx.closePath();
+    ctx.fillStyle = fillStyle;
+    ctx.fill();
+  }
+
+  function loop(now){
+    if(!lastTime) lastTime = now;
+    const delta = now - lastTime;
+    lastTime = now;
+
+    if(running){
+      moveAccumulator += delta;
+      const interval = 1000 / speed;
+      while(moveAccumulator >= interval){
+        update();
+        moveAccumulator -= interval;
+      }
+    }
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // Kontroller: klavye
+  window.addEventListener('keydown', e => {
+    if(e.key === 'ArrowUp') nextDir = {x:0,y:-1};
+    if(e.key === 'ArrowDown') nextDir = {x:0,y:1};
+    if(e.key === 'ArrowLeft') nextDir = {x:-1,y:0};
+    if(e.key === 'ArrowRight') nextDir = {x:1,y:0};
+    if(e.key === ' '){ running = !running; }
+  });
+
+  // Butonlar
+  document.getElementById('btn-restart').addEventListener('click', () => {
+    resetGame();
+  });
+  document.getElementById('btn-pause').addEventListener('click', () => {
+    running = !running;
+    document.getElementById('btn-pause').innerText = running ? 'Duraklat' : 'Devam';
+  });
+
+  // Dokunmatik kaydırma (swipe) - mobil için
+  let touchStartX = 0, touchStartY = 0, touchStartTime = 0;
+  const SWIPE_THRESHOLD = 30; // px
+  canvas.addEventListener('touchstart', e => {
+    const t = e.touches[0];
+    touchStartX = t.clientX;
+    touchStartY = t.clientY;
+    touchStartTime = performance.now();
+  }, {passive:true});
+  canvas.addEventListener('touchmove', e => {
+    // engelleme yok
+  }, {passive:true});
+  canvas.addEventListener('touchend', e => {
+    const touch = (e.changedTouches && e.changedTouches[0]) || {};
+    const dx = touch.clientX - touchStartX;
+    const dy = touch.clientY - touchStartY;
+    if(Math.abs(dx) < SWIPE_THRESHOLD && Math.abs(dy) < SWIPE_THRESHOLD) {
+      // dokunma küçükse başlat/durdur
+      running = !running;
+      document.getElementById('btn-pause').innerText = running ? 'Duraklat' : 'Devam';
+      return;
+    }
+    if(Math.abs(dx) > Math.abs(dy)){
+      if(dx > 0) nextDir = {x:1,y:0};
+      else nextDir = {x:-1,y:0};
+    } else {
+      if(dy > 0) nextDir = {x:0,y:1};
+      else nextDir = {x:0,y:-1};
+    }
+  });
+
+  // Fare ile ok tuşu tarzı (masaüstü için)
+  let startMouse = null;
+  canvas.addEventListener('mousedown', e => { startMouse = {x:e.clientX, y:e.clientY}; });
+  window.addEventListener('mouseup', e => {
+    if(!startMouse) return;
+    const dx = e.clientX - startMouse.x;
+    const dy = e.clientY - startMouse.y;
+    if(Math.abs(dx) < 10 && Math.abs(dy) < 10) {
+      running = !running;
+      document.getElementById('btn-pause').innerText = running ? 'Duraklat' : 'Devam';
+    } else {
+      if(Math.abs(dx) > Math.abs(dy)){
+        nextDir = {x: dx>0 ? 1 : -1, y:0};
+      } else {
+        nextDir = {x:0, y: dy>0 ? 1 : -1};
+      }
+    }
+    startMouse = null;
+  });
+
+  // Başlat
+  lastTime = performance.now();
+  requestAnimationFrame(loop);
+
+})();
+</script>
+</body>
+</html>
